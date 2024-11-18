@@ -1,27 +1,101 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Criador de Stop motion</title>
+    <title>Stop Motion Creator</title>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
     <style>
         .container { max-width: 800px; margin: 20px auto; padding: 20px; font-family: Arial; }
-        #display { width: 640px; height: 480px; border: 2px solid #333; margin: 20px 0; }
         .preview { width: 120px; height: 90px; object-fit: cover; margin: 5px; border: 2px solid #ddd; }
         .preview.selected { border-color: #007bff; }
         #photoStrip { display: flex; flex-wrap: wrap; gap: 10px; margin: 20px 0; border: 1px solid #ddd; min-height: 100px; }
-        .controls { margin: 20px 0; }
+        .controls { margin: 20px 0; text-align: center; }
         button { padding: 10px 20px; margin: 0 10px; font-size: 16px; cursor: pointer; }
         .music-button { background: #4CAF50; color: white; border: none; border-radius: 4px; }
         .music-button.active { background: #2E7D32; }
         #recordingCanvas { display: none; }
+
+        .frame-container {
+            width: 660px;
+            height: 500px;
+            margin: 20px auto;
+            background: linear-gradient(45deg, #1e90ff, #4169e1);
+            padding: 10px;
+            border-radius: 10px;
+            box-shadow: 0 10px 20px rgba(0,0,0,0.2);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            position: relative;
+        }
+
+        #camera {
+            width: 640px;
+            height: 480px;
+            object-fit: contain;
+            background: #000;
+            display: block;
+        }
+
+        #display {
+            width: 640px;
+            height: 480px;
+            object-fit: contain;
+            background: #000;
+            display: none;
+        }
+
+        .music-controls {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin: 20px 0;
+        }
+
+        .recording-indicator {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(255, 0, 0, 0.8);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            font-weight: bold;
+            display: none;
+            animation: blink 1s infinite;
+            z-index: 1000;
+        }
+
+        @keyframes blink {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+
+        .export-status {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 10px 20px;
+            border-radius: 5px;
+            display: none;
+            z-index: 1000;
+        }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>Criador de Stop Motion</h1>
+        <h1>Stop Motion Creator</h1>
         
-        <video id="camera" style="display: none"></video>
-        <img id="display" src="/api/placeholder/640/480" alt="Display">
+        <div class="frame-container">
+            <video id="camera" autoplay playsinline></video>
+            <img id="display" alt="Display">
+            <div class="recording-indicator">GRAVANDO...</div>
+            <div class="export-status">Preparando exportação...</div>
+        </div>
+        
         <canvas id="recordingCanvas"></canvas>
         
         <div class="controls">
@@ -29,8 +103,10 @@
             <button id="playBtn">Play</button>
             <button id="clearBtn">Limpar Tudo</button>
             <button id="exportBtn">Exportar Vídeo</button>
-            <input type="range" id="speedControl" min="1" max="30" value="10">
-            <span id="fpsDisplay">10 FPS</span>
+            <div>
+                <input type="range" id="speedControl" min="1" max="30" value="10">
+                <span id="fpsDisplay">10 FPS</span>
+            </div>
         </div>
 
         <div class="music-controls">
@@ -50,7 +126,9 @@
         let currentPlayIndex = 0;
         let playInterval;
         let currentMusicStyle = null;
+        let isExporting = false;
 
+        // Configuração dos sintetizadores
         const synth = new Tone.PolySynth().toDestination();
         const drumSynth = new Tone.MembraneSynth().toDestination();
         const pluckSynth = new Tone.PluckSynth().toDestination();
@@ -92,14 +170,15 @@
                 const stream = await navigator.mediaDevices.getUserMedia({ 
                     video: { width: 640, height: 480 } 
                 });
+                const camera = document.getElementById('camera');
                 camera.srcObject = stream;
-                camera.play();
             } catch (err) {
                 alert('Não foi possível acessar a câmera');
             }
         }
 
         function capturePhoto() {
+            const camera = document.getElementById('camera');
             const canvas = document.createElement('canvas');
             canvas.width = 640;
             canvas.height = 480;
@@ -117,10 +196,49 @@
         }
 
         function displayPhoto(index) {
+            const display = document.getElementById('display');
+            const camera = document.getElementById('camera');
+            
             display.src = photos[index];
+            display.style.display = 'block';
+            camera.style.display = 'none';
+            
             document.querySelectorAll('.preview').forEach((thumb, i) => {
                 thumb.classList.toggle('selected', i === index);
             });
+        }
+
+        function togglePlay() {
+            if (photos.length === 0) {
+                alert('Capture algumas fotos primeiro!');
+                return;
+            }
+
+            isPlaying = !isPlaying;
+            const playBtn = document.getElementById('playBtn');
+            playBtn.textContent = isPlaying ? 'Pause' : 'Play';
+            
+            const camera = document.getElementById('camera');
+            const display = document.getElementById('display');
+
+            if (isPlaying) {
+                camera.style.display = 'none';
+                display.style.display = 'block';
+                
+                if (currentMusicStyle) {
+                    startMusic(currentMusicStyle);
+                }
+                const fps = parseInt(document.getElementById('speedControl').value);
+                playInterval = setInterval(() => {
+                    displayPhoto(currentPlayIndex);
+                    currentPlayIndex = (currentPlayIndex + 1) % photos.length;
+                }, 1000 / fps);
+            } else {
+                stopMusic();
+                clearInterval(playInterval);
+                camera.style.display = 'block';
+                display.style.display = 'none';
+            }
         }
 
         function startMusic(style) {
@@ -170,81 +288,88 @@
                 return;
             }
 
-            const canvas = document.getElementById('recordingCanvas');
-            canvas.width = 640;
-            canvas.height = 480;
-            const ctx = canvas.getContext('2d');
-            
-            const stream = canvas.captureStream(30);
-            const mediaRecorder = new MediaRecorder(stream, {
-                mimeType: 'video/webm;codecs=vp9'
-            });
-            
-            const chunks = [];
-            mediaRecorder.ondataavailable = e => chunks.push(e.data);
-            mediaRecorder.onstop = () => {
-                const blob = new Blob(chunks, { type: 'video/webm' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = 'stop-motion.webm';
-                a.click();
-                URL.revokeObjectURL(url);
-            };
-
-            mediaRecorder.start();
-
-            const fps = parseInt(document.getElementById('speedControl').value);
-            const frameTime = 1000 / fps;
-
-            for (let i = 0; i < photos.length * 2; i++) {
-                const img = new Image();
-                img.src = photos[i % photos.length];
-                await new Promise(resolve => {
-                    img.onload = () => {
-                        ctx.clearRect(0, 0, canvas.width, canvas.height);
-                        ctx.drawImage(img, 0, 0);
-                        setTimeout(resolve, frameTime);
-                    };
-                });
-            }
-
-            mediaRecorder.stop();
-        }
-
-        function togglePlay() {
-            if (photos.length === 0) {
-                alert('Capture algumas fotos primeiro!');
+            if (isExporting) {
                 return;
             }
 
-            isPlaying = !isPlaying;
-            playBtn.textContent = isPlaying ? 'Pause' : 'Play';
+            isExporting = true;
+            const recordingIndicator = document.querySelector('.recording-indicator');
+            const exportStatus = document.querySelector('.export-status');
 
-            if (isPlaying) {
-                if (currentMusicStyle) {
-                    startMusic(currentMusicStyle);
+            try {
+                recordingIndicator.style.display = 'block';
+                exportStatus.style.display = 'block';
+                exportStatus.textContent = 'Iniciando exportação...';
+
+                const canvas = document.getElementById('recordingCanvas');
+                canvas.width = 640;
+                canvas.height = 480;
+                const ctx = canvas.getContext('2d');
+
+                const stream = canvas.captureStream();
+                const mediaRecorder = new MediaRecorder(stream, {
+                    mimeType: 'video/webm'
+                });
+
+                const chunks = [];
+                mediaRecorder.ondataavailable = e => chunks.push(e.data);
+                mediaRecorder.onstop = () => {
+                    const blob = new Blob(chunks, { type: 'video/webm' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'stop-motion.webm';
+                    a.click();
+                    URL.revokeObjectURL(url);
+                    
+                    recordingIndicator.style.display = 'none';
+                    exportStatus.style.display = 'none';
+                    isExporting = false;
+                };
+
+                mediaRecorder.start();
+
+                const fps = parseInt(document.getElementById('speedControl').value);
+                const frameTime = 1000 / fps;
+
+                for (let i = 0; i < photos.length; i++) {
+                    exportStatus.textContent = `Processando frame ${i + 1} de ${photos.length}...`;
+                    const img = new Image();
+                    img.src = photos[i];
+                    await new Promise(resolve => {
+                        img.onload = () => {
+                            ctx.clearRect(0, 0, canvas.width, canvas.height);
+                            ctx.drawImage(img, 0, 0);
+                            setTimeout(resolve, frameTime);
+                        };
+                    });
                 }
-                const fps = parseInt(speedControl.value);
-                playInterval = setInterval(() => {
-                    displayPhoto(currentPlayIndex);
-                    currentPlayIndex = (currentPlayIndex + 1) % photos.length;
-                }, 1000 / fps);
-            } else {
-                stopMusic();
-                clearInterval(playInterval);
+
+                mediaRecorder.stop();
+
+            } catch (error) {
+                alert('Erro ao exportar o vídeo: ' + error.message);
+                recordingIndicator.style.display = 'none';
+                exportStatus.style.display = 'none';
+                isExporting = false;
             }
         }
 
         function clearAll() {
             photos.length = 0;
             photoStrip.innerHTML = '';
-            display.src = "/api/placeholder/640/480";
+            const camera = document.getElementById('camera');
+            const display = document.getElementById('display');
+            
+            camera.style.display = 'block';
+            display.style.display = 'none';
+            display.src = '';
+            
             isPlaying = false;
             currentPlayIndex = 0;
             clearInterval(playInterval);
             stopMusic();
-            playBtn.textContent = 'Play';
+            document.getElementById('playBtn').textContent = 'Play';
         }
 
         document.querySelectorAll('.music-button').forEach(button => {
