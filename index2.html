@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Criador de Stop Motion </title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gif.js/0.2.0/gif.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <style>
+        .container {
+            max-width: 800px;
+            margin: 20px auto;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+        }
+        .preview {
+            width: 120px;
+            height: 90px;
+            object-fit: cover;
+            margin: 5px;
+            border: 2px solid #ddd;
+        }
+        .preview.selected {
+            border-color: #007bff;
+        }
+        #photoStrip {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin: 20px 0;
+            padding: 10px;
+            border: 1px solid #ddd;
+            min-height: 100px;
+        }
+        #display {
+            width: 640px;
+            height: 480px;
+            border: 2px solid #333;
+            margin: 20px 0;
+            object-fit: contain;
+        }
+        .controls {
+            margin: 20px 0;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 0 10px;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        #exportProgress {
+            display: none;
+            margin: 10px 0;
+        }
+        .music-controls {
+            margin: 20px 0;
+            padding: 10px;
+            background: #f5f5f5;
+            border-radius: 5px;
+        }
+        .music-button {
+            margin: 5px;
+            padding: 8px 15px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+        }
+        .music-button.active {
+            background: #2E7D32;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Stop Motion Creator</h1>
+        
+        <video id="camera" style="display: none"></video>
+        <img id="display" src="/api/placeholder/640/480" alt="Display">
+        
+        <div class="controls">
+            <button id="captureBtn">Capturar Foto</button>
+            <button id="playBtn">Play</button>
+            <button id="clearBtn">Limpar Tudo</button>
+            <button id="exportGifBtn">Exportar GIF</button>
+            <input type="range" id="speedControl" min="1" max="30" value="10">
+            <span id="fpsDisplay">10 FPS</span>
+        </div>
+
+        <div class="music-controls">
+            <h3>Estilos Musicais:</h3>
+            <button class="music-button" data-style="jazz">Jazz Loop</button>
+            <button class="music-button" data-style="electronic">Electronic Beat</button>
+            <button class="music-button" data-style="ambient">Ambient</button>
+            <button class="music-button" data-style="drums">Drum Pattern</button>
+            <button class="music-button" data-style="synth">Synth Wave</button>
+        </div>
+        
+        <div id="exportProgress">Gerando GIF: <span id="progressText">0%</span></div>
+        <div id="photoStrip"></div>
+    </div>
+
+    <script>
+        const photos = [];
+        const maxPhotos = 30;
+        let isPlaying = false;
+        let currentPlayIndex = 0;
+        let playInterval;
+        let currentMusicStyle = null;
+
+        // Configuração do Tone.js
+        const synth = new Tone.PolySynth().toDestination();
+        const drumSynth = new Tone.MembraneSynth().toDestination();
+        const pluckSynth = new Tone.PluckSynth().toDestination();
+        const metalSynth = new Tone.MetalSynth().toDestination();
+        const amSynth = new Tone.AMSynth().toDestination();
+
+        // Padrões musicais
+        const musicPatterns = {
+            jazz: {
+                notes: ["D4", "F4", "A4", "C5", "B4", "G4"],
+                duration: "8n",
+                interval: 0.3
+            },
+            electronic: {
+                notes: ["C3", "G3", "C4", "E4", "G4", "C5"],
+                duration: "16n",
+                interval: 0.2
+            },
+            ambient: {
+                notes: ["E3", "A3", "B3", "E4", "G#4", "B4"],
+                duration: "2n",
+                interval: 1.0
+            },
+            drums: {
+                notes: ["C2", "G2", "C1", "G1", "C2", "G2"],
+                duration: "8n",
+                interval: 0.25
+            },
+            synth: {
+                notes: ["F4", "A4", "C5", "E5", "D5", "B4"],
+                duration: "4n",
+                interval: 0.4
+            }
+        };
+
+        let musicLoop = null;
+
+        function startMusic(style) {
+            if (musicLoop) {
+                musicLoop.stop();
+                musicLoop.dispose();
+            }
+
+            const pattern = musicPatterns[style];
+            let noteIndex = 0;
+
+            musicLoop = new Tone.Loop(time => {
+                switch(style) {
+                    case 'jazz':
+                        synth.triggerAttackRelease(pattern.notes[noteIndex], pattern.duration);
+                        break;
+                    case 'electronic':
+                        metalSynth.triggerAttackRelease(pattern.notes[noteIndex], pattern.duration);
+                        break;
+                    case 'ambient':
+                        amSynth.triggerAttackRelease(pattern.notes[noteIndex], pattern.duration);
+                        break;
+                    case 'drums':
+                        drumSynth.triggerAttackRelease(pattern.notes[noteIndex], pattern.duration);
+                        break;
+                    case 'synth':
+                        pluckSynth.triggerAttackRelease(pattern.notes[noteIndex], pattern.duration);
+                        break;
+                }
+                noteIndex = (noteIndex + 1) % pattern.notes.length;
+            }, pattern.interval).start(0);
+
+            Tone.Transport.start();
+        }
+
+        function stopMusic() {
+            if (musicLoop) {
+                musicLoop.stop();
+                musicLoop.dispose();
+            }
+            Tone.Transport.stop();
+        }
+
+        // Event listeners para botões de música
+        document.querySelectorAll('.music-button').forEach(button => {
+            button.addEventListener('click', async () => {
+                const style = button.dataset.style;
+                
+                // Inicializa o contexto de áudio se necessário
+                if (Tone.context.state !== 'running') {
+                    await Tone.start();
+                }
+
+                document.querySelectorAll('.music-button').forEach(btn => {
+                    btn.classList.remove('active');
+                });
+
+                if (currentMusicStyle === style) {
+                    stopMusic();
+                    currentMusicStyle = null;
+                } else {
+                    button.classList.add('active');
+                    currentMusicStyle = style;
+                    if (isPlaying) {
+                        startMusic(style);
+                    }
+                }
+            });
+        });
+
+        const camera = document.getElementById('camera');
+        const display = document.getElementById('display');
+        const photoStrip = document.getElementById('photoStrip');
+        const captureBtn = document.getElementById('captureBtn');
+        const playBtn = document.getElementById('playBtn');
+        const clearBtn = document.getElementById('clearBtn');
+        const exportGifBtn = document.getElementById('exportGifBtn');
+        const speedControl = document.getElementById('speedControl');
+        const fpsDisplay = document.getElementById('fpsDisplay');
+        const exportProgress = document.getElementById('exportProgress');
+        const progressText = document.getElementById('progressText');
+
+        async function initCamera() {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { width: 640, height: 480 } 
+                });
+                camera.srcObject = stream;
+                camera.play();
+                display.src = "";
+            } catch (err) {
+                console.error('Erro ao acessar câmera:', err);
+                alert('Não foi possível acessar a câmera');
+            }
+        }
+
+        function capturePhoto() {
+            if (photos.length >= maxPhotos) {
+                alert('Limite máximo de 30 fotos atingido!');
+                return;
+            }
+
+            const canvas = document.createElement('canvas');
+            canvas.width = 640;
+            canvas.height = 480;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(camera, 0, 0);
+            
+            const imgUrl = canvas.toDataURL('image/jpeg');
+            photos.push(imgUrl);
+            
+            const thumbnail = document.createElement('img');
+            thumbnail.src = imgUrl;
+            thumbnail.className = 'preview';
+            thumbnail.onclick = () => displayPhoto(photos.length - 1);
+            photoStrip.appendChild(thumbnail);
+        }
+
+        function displayPhoto(index) {
+            display.src = photos[index];
+            document.querySelectorAll('.preview').forEach((thumb, i) => {
+                thumb.classList.toggle('selected', i === index);
+            });
+        }
+
+        function togglePlay() {
+            if (photos.length === 0) {
+                alert('Capture algumas fotos primeiro!');
+                return;
+            }
+
+            isPlaying = !isPlaying;
+            playBtn.textContent = isPlaying ? 'Pause' : 'Play';
+
+            if (isPlaying) {
+                if (currentMusicStyle) {
+                    startMusic(currentMusicStyle);
+                }
+                const fps = parseInt(speedControl.value);
+                playInterval = setInterval(() => {
+                    displayPhoto(currentPlayIndex);
+                    currentPlayIndex = (currentPlayIndex + 1) % photos.length;
+                }, 1000 / fps);
+            } else {
+                stopMusic();
+                clearInterval(playInterval);
+            }
+        }
+
+        function clearAll() {
+            photos.length = 0;
+            photoStrip.innerHTML = '';
+            display.src = "/api/placeholder/640/480";
+            isPlaying = false;
+            currentPlayIndex = 0;
+            clearInterval(playInterval);
+            stopMusic();
+            playBtn.textContent = 'Play';
+        }
+
+        function exportGif() {
+            if (photos.length === 0) {
+                alert('Capture algumas fotos primeiro!');
+                return;
+            }
+
+            const gif = new GIF({
+                workers: 2,
+                quality: 10,
+                width: 640,
+                height: 480
+            });
+
+            exportProgress.style.display = 'block';
+            const fps = parseInt(speedControl.value);
+            const delay = 1000 / fps;
+
+            photos.forEach(photoUrl => {
+                const img = new Image();
+                img.src = photoUrl;
+                gif.addFrame(img, {delay: delay});
+            });
+
+            gif.on('progress', p => {
+                progressText.textContent = Math.round(p * 100) + '%';
+            });
+
+            gif.on('finished', blob => {
+                exportProgress.style.display = 'none';
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'stop-motion.gif';
+                a.click();
+                URL.revokeObjectURL(url);
+            });
+
+            gif.render();
+        }
+
+        captureBtn.onclick = capturePhoto;
+        playBtn.onclick = togglePlay;
+        clearBtn.onclick = clearAll;
+        exportGifBtn.onclick = exportGif;
+        speedControl.oninput = () => {
+            fpsDisplay.textContent = `${speedControl.value} FPS`;
+            if (isPlaying) {
+                clearInterval(playInterval);
+                togglePlay();
+            }
+        };
+
+        initCamera();
+    </script>
+</body>
+</html>
